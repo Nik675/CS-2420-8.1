@@ -2,7 +2,6 @@
 #include <iostream>
 #include <memory>
 #include <stdexcept>
-#include <functional>
 
 using namespace std;
 
@@ -39,28 +38,34 @@ public:
     bool contains(int) const;
     int indexOf(int value) const;
     void clear();
-    void rehash();
     static bool isPrime(int n);
     static int nextPrime(int n);
     friend ostream& operator<< <>(ostream &, Hashtable<Type>&);
 
 private:
-    int hash(const Type& v) const;
+    int hash(int v) const;
+    void resize();
     int capacity;
     int size;
     double loadFactorThreshold;
-    unique_ptr<Bucket<Type>[]> htable;
+    unique_ptr<Bucket<Type>[]> htable; // Add this line
 };
 
+
 template<class Type>
-Hashtable<Type>::Hashtable() : capacity(17), loadFactorThreshold(0.65) {
+Hashtable<Type>::Hashtable()
+{
     size = 0;
+    capacity = 17;
+    loadFactorThreshold = 0.65; // Initialize loadFactorThreshold
     htable = make_unique<Bucket<Type>[]>(capacity);
 }
 
+
 template<class Type>
-Hashtable<Type>::Hashtable(int capacity) : capacity(capacity), loadFactorThreshold(0.65) {
+Hashtable<Type>::Hashtable(int capacity) : capacity(capacity) {
     size = 0;
+    loadFactorThreshold = 0.65; // Initialize loadFactorThreshold
     htable = make_unique<Bucket<Type>[]>(capacity);
 }
 
@@ -74,7 +79,6 @@ template<class Type>
 Hashtable<Type>::Hashtable(const Hashtable<Type>& other) {
     size = other.size;
     capacity = other.capacity;
-    loadFactorThreshold = other.loadFactorThreshold;
     htable = make_unique<Bucket<Type>[]>(capacity);
     for (int i = 0; i < capacity; ++i) {
         htable[i] = other.htable[i];
@@ -88,7 +92,6 @@ Hashtable<Type>& Hashtable<Type>::operator=(const Hashtable<Type>& other) {
 
         size = other.size;
         capacity = other.capacity;
-        loadFactorThreshold = other.loadFactorThreshold;
         htable = make_unique<Bucket<Type>[]>(capacity);
 		
         for (int i = 0; i < capacity; ++i) 
@@ -102,8 +105,8 @@ Hashtable<Type>& Hashtable<Type>::operator=(const Hashtable<Type>& other) {
 }
 
 template<class Type>
-int Hashtable<Type>::hash(const Type& v) const {
-    return std::hash<Type>{}(v) % capacity;
+int Hashtable<Type>::hash(int v) const {
+    return v % capacity;
 }
 
 template<class Type>
@@ -134,14 +137,12 @@ bool Hashtable<Type>::empty() const
 
 template<class Type>
 void Hashtable<Type>::insert(Type value) {
-    if (static_cast<double>(size) / capacity >= loadFactorThreshold) {
-        rehash();
+    if (size >= capacity * loadFactorThreshold) {
+        resize();
     }
     int index = hash(value);
-    int j = 1;
     while (!htable[index].empty) {
-        index = (index + j * j) % capacity;
-        ++j;
+        index = (index + 1) % capacity;
     }
     htable[index].data = value;
     htable[index].empty = false;
@@ -151,38 +152,51 @@ void Hashtable<Type>::insert(Type value) {
 template<class Type>
 void Hashtable<Type>::remove(int value) {
     int index = hash(value);
-    int j = 1;
+    int start_index = index;
     while (!htable[index].empty) {
         if (htable[index].data == value) {
             htable[index].empty = true;
             --size;
-            // Reinsert elements in the same cluster to maintain proper probing sequence
-            int nextIndex = (index + j * j) % capacity;
+            
+            // Rehash elements after the removed element
+            int nextIndex = (index + 1) % capacity;
             while (!htable[nextIndex].empty) {
-                Type temp = htable[nextIndex].data;
+                Type currentValue = htable[nextIndex].data;
                 htable[nextIndex].empty = true;
                 --size;
-                insert(temp);
-                nextIndex = (nextIndex + j * j) % capacity;
-                ++j;
+                
+                // Find the correct position for this value
+                int newIndex = hash(currentValue);
+                while (!htable[newIndex].empty) {
+                    newIndex = (newIndex + 1) % capacity;
+                }
+                htable[newIndex].data = currentValue;
+                htable[newIndex].empty = false;
+                ++size;
+                
+                nextIndex = (nextIndex + 1) % capacity;
             }
             return;
         }
-        index = (index + j * j) % capacity;
-        ++j;
+        index = (index + 1) % capacity;
+        if (index == start_index) {
+            break;
+        }
     }
 }
 
 template<class Type>
 bool Hashtable<Type>::contains(int value) const {
     int index = hash(value);
-    int j = 1;
+    int start_index = index;
     while (!htable[index].empty) {
         if (htable[index].data == value) {
             return true;
         }
-        index = (index + j * j) % capacity;
-        ++j;
+        index = (index + 1) % capacity;
+        if (index == start_index) {
+            break;
+        }
     }
     return false;
 }
@@ -199,33 +213,6 @@ int Hashtable<Type>::indexOf(int value) const {
         ++j;
     }
     return -1;
-}
-
-template<class Type>
-void Hashtable<Type>::clear()
-{
-    size = 0;
-    htable = make_unique<Bucket<Type>[]>(capacity);
-}
-
-template<class Type>
-void Hashtable<Type>::rehash() {
-    int oldCapacity = capacity;
-    capacity = nextPrime(2 * capacity);
-    unique_ptr<Bucket<Type>[]> newTable = make_unique<Bucket<Type>[]>(capacity);
-    for (int i = 0; i < oldCapacity; ++i) {
-        if (!htable[i].empty) {
-            int index = hash(htable[i].data);
-            int j = 1;
-            while (!newTable[index].empty) {
-                index = (index + j * j) % capacity;
-                ++j;
-            }
-            newTable[index].data = htable[i].data;
-            newTable[index].empty = false;
-        }
-    }
-    htable = move(newTable);
 }
 
 template<class Type>
@@ -248,6 +235,34 @@ int Hashtable<Type>::nextPrime(int n) {
 }
 
 template<class Type>
+void Hashtable<Type>::clear()
+{
+    size = 0;
+    htable = make_unique<Bucket<Type>[]>(capacity);
+}
+
+template<class Type>
+void Hashtable<Type>::resize() {
+    int oldCapacity = capacity;
+    capacity = nextPrime(2 * oldCapacity);
+    unique_ptr<Bucket<Type>[]> newTable = make_unique<Bucket<Type>[]>(capacity);
+
+    for (int i = 0; i < oldCapacity; ++i) {
+        if (!htable[i].empty) {
+            int index = hash(htable[i].data);
+            while (!newTable[index].empty) {
+                index = (index + 1) % capacity;
+            }
+            newTable[index].data = htable[i].data;
+            newTable[index].empty = false;
+        }
+    }
+
+    htable = move(newTable);
+}
+
+template<class Type>
+
 ostream& operator<< (ostream & out, Hashtable<Type>& h) 
 {
     out << "\nCapacity: " << h.capacity << "\n";
